@@ -1,12 +1,12 @@
 venv/
 .venv/
 
-__pycache__/
-
 .env
 
-faiss_db/
+__pycache__/
+*.pyc
 
 uploads/
+faiss_db/
 
-*.pyc
+.streamlit/secrets.toml
