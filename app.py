@@ -1,10 +1,18 @@
 import os
-import hashlib
-import streamlit as st
-from pypdf import PdfReader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from vector_store import create_vector_db
+import streamlit as st
+
+from pypdf import PdfReader
+
+from langchain_text_splitters import (
+    RecursiveCharacterTextSplitter
+)
+
+from vector_store import (
+    create_vector_db,
+    load_vector_db
+)
+
 from rag import answer_question
 
 
@@ -13,109 +21,23 @@ from rag import answer_question
 # =========================================================
 
 st.set_page_config(
+
     page_title="AI Research Assistant",
+
     page_icon="🤖",
-    layout="wide",
-    initial_sidebar_state="expanded"
+
+    layout="wide"
 )
 
 
 # =========================================================
-# CUSTOM CSS
+# HEADER
 # =========================================================
 
-st.markdown(
-    """
-    <style>
+st.title("🤖 AI Research Assistant")
 
-    /* Main page */
-    .main {
-        padding-top: 1rem;
-    }
-
-    /* Header */
-    .main-title {
-        font-size: 2.4rem;
-        font-weight: 700;
-        margin-bottom: 0.2rem;
-    }
-
-    .subtitle {
-        font-size: 1.05rem;
-        color: #6b7280;
-        margin-bottom: 1.5rem;
-    }
-
-    /* Status cards */
-    .status-card {
-        padding: 1rem;
-        border-radius: 12px;
-        border: 1px solid #e5e7eb;
-        background-color: #f8fafc;
-        margin-bottom: 1rem;
-    }
-
-    .status-title {
-        font-weight: 600;
-        font-size: 1rem;
-        margin-bottom: 0.3rem;
-    }
-
-    .status-text {
-        color: #6b7280;
-        font-size: 0.9rem;
-    }
-
-    /* PDF cards */
-    .pdf-card {
-        padding: 0.7rem 0.8rem;
-        border-radius: 10px;
-        border: 1px solid #e5e7eb;
-        margin-bottom: 0.5rem;
-        background-color: white;
-    }
-
-    /* Source cards */
-    .source-card {
-        padding: 0.8rem;
-        border-radius: 10px;
-        border: 1px solid #e5e7eb;
-        background-color: #f8fafc;
-        margin-bottom: 0.7rem;
-    }
-
-    .source-title {
-        font-weight: 600;
-        margin-bottom: 0.2rem;
-    }
-
-    .source-meta {
-        color: #6b7280;
-        font-size: 0.85rem;
-    }
-
-    /* Chat */
-    .chat-empty {
-        text-align: center;
-        padding: 4rem 1rem;
-        color: #6b7280;
-    }
-
-    .chat-empty-title {
-        font-size: 1.5rem;
-        font-weight: 600;
-        color: #374151;
-        margin-bottom: 0.5rem;
-    }
-
-    /* Sidebar */
-    section[data-testid="stSidebar"] {
-        border-right: 1px solid #e5e7eb;
-    }
-
-    </style>
-    """,
-    unsafe_allow_html=True
+st.caption(
+    "Upload multiple PDFs and chat with them using AI-powered RAG"
 )
 
 
@@ -124,144 +46,38 @@ st.markdown(
 # =========================================================
 
 if "chat_history" not in st.session_state:
+
     st.session_state.chat_history = []
 
+
 if "processed" not in st.session_state:
+
     st.session_state.processed = False
 
+
 if "uploaded_files" not in st.session_state:
+
     st.session_state.uploaded_files = []
 
-if "pdf_hash" not in st.session_state:
-    st.session_state.pdf_hash = ""
 
-if "processing" not in st.session_state:
-    st.session_state.processing = False
+if "vector_db" not in st.session_state:
 
-
-# =========================================================
-# HELPER FUNCTIONS
-# =========================================================
-
-def calculate_files_hash(files):
-    """
-    Create a unique hash for the currently uploaded PDFs.
-
-    This helps us detect whether the user uploaded
-    a new set of PDFs.
-    """
-
-    hasher = hashlib.md5()
-
-    for file in files:
-        hasher.update(file.name.encode("utf-8"))
-        hasher.update(file.getbuffer())
-
-    return hasher.hexdigest()
-
-
-def process_pdfs(uploaded_files):
-    """
-    Read multiple PDFs, extract text and create chunks.
-    """
-
-    all_chunks = []
-
-    os.makedirs("uploads", exist_ok=True)
-
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1500,
-        chunk_overlap=300
-    )
-
-    for uploaded_file in uploaded_files:
-
-        file_path = os.path.join(
-            "uploads",
-            uploaded_file.name
-        )
-
-        # -------------------------------------------------
-        # Save PDF
-        # -------------------------------------------------
-
-        with open(file_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-
-        # -------------------------------------------------
-        # Read PDF
-        # -------------------------------------------------
-
-        reader = PdfReader(file_path)
-
-        for page_number, page in enumerate(reader.pages, start=1):
-
-            page_text = page.extract_text()
-
-            if not page_text:
-                continue
-
-            # -------------------------------------------------
-            # Split each page separately
-            #
-            # This helps preserve page information.
-            # -------------------------------------------------
-
-            page_chunks = splitter.split_text(page_text)
-
-            for chunk in page_chunks:
-
-                all_chunks.append(
-                    {
-                        "text": chunk,
-                        "source": uploaded_file.name,
-                        "page": page_number
-                    }
-                )
-
-    return all_chunks
-
-
-def create_documents_for_vector_db(chunks):
-    """
-    Convert our chunk dictionaries into LangChain Documents.
-
-    Metadata allows the application to display:
-    PDF name + page number in the sources section.
-    """
-
-    from langchain_core.documents import Document
-
-    documents = []
-
-    for chunk in chunks:
-
-        document = Document(
-            page_content=chunk["text"],
-            metadata={
-                "source": chunk["source"],
-                "page": chunk["page"]
-            }
-        )
-
-        documents.append(document)
-
-    return documents
+    st.session_state.vector_db = None
 
 
 # =========================================================
-# HEADER
+# TRY TO LOAD EXISTING DATABASE
 # =========================================================
 
-st.markdown(
-    '<div class="main-title">🤖 AI Research Assistant</div>',
-    unsafe_allow_html=True
-)
+if st.session_state.vector_db is None:
 
-st.markdown(
-    '<div class="subtitle">Upload multiple PDFs and chat with them using AI-powered RAG</div>',
-    unsafe_allow_html=True
-)
+    existing_db = load_vector_db()
+
+    if existing_db is not None:
+
+        st.session_state.vector_db = existing_db
+
+        st.session_state.processed = True
 
 
 # =========================================================
@@ -272,129 +88,222 @@ with st.sidebar:
 
     st.header("📚 PDF Library")
 
-    st.caption(
-        "Upload one or more PDF documents and build your knowledge base."
+    st.write(
+        "Upload one or more PDF documents and "
+        "build your knowledge base."
     )
 
+
+    # -----------------------------------------------------
+    # PDF UPLOADER
+    # -----------------------------------------------------
+
     uploaded_files = st.file_uploader(
+
         "Upload PDF documents",
+
         type=["pdf"],
+
         accept_multiple_files=True
     )
 
-    # -----------------------------------------------------
-    # Number of PDFs
-    # -----------------------------------------------------
-
-    if uploaded_files:
-
-        st.info(
-            f"📄 {len(uploaded_files)} PDF(s) selected"
-        )
 
     # -----------------------------------------------------
-    # Process PDFs button
+    # SHOW SELECTED FILES
     # -----------------------------------------------------
 
     if uploaded_files:
 
-        current_hash = calculate_files_hash(uploaded_files)
-
-        already_processed = (
-            st.session_state.pdf_hash == current_hash
-            and st.session_state.processed
+        st.write(
+            f"📄 **{len(uploaded_files)} PDF(s) selected**"
         )
 
-        if already_processed:
 
-            st.success(
-                "🟢 These PDFs are already processed."
+    # -----------------------------------------------------
+    # PROCESS PDFs
+    # -----------------------------------------------------
+
+    if uploaded_files:
+
+        if st.button(
+            "⚡ Process PDFs",
+            use_container_width=True
+        ):
+
+            all_chunks = []
+
+
+            # Create uploads folder
+
+            os.makedirs(
+                "uploads",
+                exist_ok=True
             )
 
-        else:
 
-            if st.button(
-                "⚡ Process PDFs",
-                use_container_width=True,
-                type="primary"
+            # -------------------------------------------------
+            # PROCESSING
+            # -------------------------------------------------
+
+            with st.spinner(
+                "📚 Reading and processing PDFs..."
             ):
 
-                st.session_state.processing = True
+                for uploaded_file in uploaded_files:
 
-                try:
+                    # -----------------------------------------
+                    # Save PDF
+                    # -----------------------------------------
 
-                    with st.spinner(
-                        "📖 Reading PDFs and creating your knowledge base..."
-                    ):
+                    file_path = os.path.join(
+                        "uploads",
+                        uploaded_file.name
+                    )
 
-                        # ---------------------------------
-                        # Extract and split PDF text
-                        # ---------------------------------
 
-                        chunks = process_pdfs(
-                            uploaded_files
+                    with open(
+                        file_path,
+                        "wb"
+                    ) as f:
+
+                        f.write(
+                            uploaded_file.getbuffer()
                         )
 
-                        if not chunks:
 
-                            st.error(
-                                "❌ No readable text was found in the uploaded PDFs."
+                    # -----------------------------------------
+                    # Read PDF
+                    # -----------------------------------------
+
+                    reader = PdfReader(
+                        file_path
+                    )
+
+
+                    text = ""
+
+
+                    for page in reader.pages:
+
+                        page_text = page.extract_text()
+
+
+                        if page_text:
+
+                            text += (
+                                page_text
+                                + "\n\n"
                             )
 
-                            st.session_state.processing = False
-                            st.stop()
 
-                        # ---------------------------------
-                        # Convert to Documents
-                        # ---------------------------------
+                    # -----------------------------------------
+                    # Check extracted text
+                    # -----------------------------------------
 
-                        documents = create_documents_for_vector_db(
-                            chunks
+                    if not text.strip():
+
+                        st.warning(
+                            f"⚠️ No readable text found in "
+                            f"{uploaded_file.name}"
                         )
 
-                        # ---------------------------------
-                        # Create FAISS database
-                        # ---------------------------------
+                        continue
 
-                        create_vector_db(
-                            documents
-                        )
 
-                    # -------------------------------------
-                    # Update session state
-                    # -------------------------------------
+                    # -----------------------------------------
+                    # Split text
+                    # -----------------------------------------
 
-                    st.session_state.processed = True
+                    splitter = RecursiveCharacterTextSplitter(
 
-                    st.session_state.pdf_hash = current_hash
+                        chunk_size=1500,
 
-                    st.session_state.uploaded_files = [
-                        file.name
-                        for file in uploaded_files
-                    ]
-
-                    # Start a fresh conversation
-                    st.session_state.chat_history = []
-
-                    st.session_state.processing = False
-
-                    st.success(
-                        f"✅ {len(uploaded_files)} PDF(s) processed successfully!"
+                        chunk_overlap=300
                     )
 
-                    st.rerun()
 
-                except Exception as e:
-
-                    st.session_state.processing = False
-
-                    st.error(
-                        f"❌ Error while processing PDFs:\n\n{str(e)}"
+                    chunks = splitter.split_text(
+                        text
                     )
+
+
+                    # -----------------------------------------
+                    # Add chunks
+                    # -----------------------------------------
+
+                    all_chunks.extend(
+                        chunks
+                    )
+
+
+            # -------------------------------------------------
+            # CHECK CHUNKS
+            # -------------------------------------------------
+
+            if not all_chunks:
+
+                st.error(
+                    "❌ No readable text was found in "
+                    "the uploaded PDFs."
+                )
+
+                st.stop()
+
+
+            # -------------------------------------------------
+            # CREATE FAISS DATABASE
+            # -------------------------------------------------
+
+            with st.spinner(
+                "🧠 Building AI knowledge base..."
+            ):
+
+                vector_db = create_vector_db(
+                    all_chunks
+                )
+
+
+            # -------------------------------------------------
+            # SAVE DATABASE TO SESSION
+            # -------------------------------------------------
+
+            st.session_state.vector_db = vector_db
+
+            st.session_state.processed = True
+
+
+            # -------------------------------------------------
+            # SAVE FILE NAMES
+            # -------------------------------------------------
+
+            st.session_state.uploaded_files = [
+
+                file.name
+
+                for file in uploaded_files
+
+            ]
+
+
+            # -------------------------------------------------
+            # CLEAR OLD CHAT
+            # -------------------------------------------------
+
+            st.session_state.chat_history = []
+
+
+            # -------------------------------------------------
+            # SUCCESS
+            # -------------------------------------------------
+
+            st.success(
+                f"✅ {len(uploaded_files)} PDF(s) "
+                f"processed successfully!"
+            )
 
 
     # =====================================================
-    # CURRENTLY LOADED PDFs
+    # CURRENTLY LOADED FILES
     # =====================================================
 
     if st.session_state.uploaded_files:
@@ -403,26 +312,22 @@ with st.sidebar:
 
         st.subheader("📂 Currently loaded")
 
+
         for file_name in st.session_state.uploaded_files:
 
-            st.markdown(
-                f"""
-                <div class="pdf-card">
-                    📄 <b>{file_name}</b>
-                </div>
-                """,
-                unsafe_allow_html=True
+            st.write(
+                f"📄 **{file_name}**"
             )
 
-        # -----------------------------------------------
-        # RAG status
-        # -----------------------------------------------
+
+    # =====================================================
+    # RAG STATUS
+    # =====================================================
+
+    if st.session_state.vector_db is not None:
 
         st.success(
-            "🟢 RAG System Ready"
-        )
-
-        st.caption(
+            "🟢 RAG System Ready\n\n"
             "Your PDFs are ready for questions."
         )
 
@@ -435,8 +340,9 @@ with st.sidebar:
 
     st.subheader("⚙️ Chat Controls")
 
+
     # -----------------------------------------------------
-    # New Chat
+    # NEW CHAT
     # -----------------------------------------------------
 
     if st.button(
@@ -450,7 +356,7 @@ with st.sidebar:
 
 
     # -----------------------------------------------------
-    # Clear Chat
+    # CLEAR CHAT
     # -----------------------------------------------------
 
     if st.button(
@@ -471,60 +377,15 @@ st.subheader("💬 Chat with your PDFs")
 
 
 # =========================================================
-# EMPTY CHAT STATE
+# EMPTY STATE
 # =========================================================
 
-if not st.session_state.chat_history:
+if not st.session_state.processed:
 
-    if st.session_state.processed:
-
-        st.markdown(
-            """
-            <div class="chat-empty">
-
-                <div class="chat-empty-title">
-                    👋 Ask something about your PDFs
-                </div>
-
-                <div>
-                    Try questions such as:
-                </div>
-
-                <br>
-
-                <div>
-                    • What is PHP?<br>
-                    • Explain the while loop.<br>
-                    • What is a local variable?<br>
-                    • Give me the syntax of lcfirst().<br>
-                    • Explain the example of explode().<br>
-                    • Which PDF contains information about functions?
-                </div>
-
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    else:
-
-        st.markdown(
-            """
-            <div class="chat-empty">
-
-                <div class="chat-empty-title">
-                    📚 Upload your PDFs to get started
-                </div>
-
-                <div>
-                    Upload one or more PDF documents from the sidebar,
-                    process them, and start asking questions.
-                </div>
-
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+    st.info(
+        "📚 Upload one or more PDFs from the sidebar "
+        "and click **Process PDFs** to get started."
+    )
 
 
 # =========================================================
@@ -533,9 +394,9 @@ if not st.session_state.chat_history:
 
 for message in st.session_state.chat_history:
 
-    role = message["role"]
-
-    with st.chat_message(role):
+    with st.chat_message(
+        message["role"]
+    ):
 
         st.markdown(
             message["content"]
@@ -552,47 +413,50 @@ question = st.chat_input(
 
 
 # =========================================================
-# HANDLE QUESTION
+# PROCESS QUESTION
 # =========================================================
 
 if question:
 
     # -----------------------------------------------------
-    # Check PDF processing
+    # CHECK DATABASE
     # -----------------------------------------------------
 
-    if not st.session_state.processed:
+    if st.session_state.vector_db is None:
 
         st.warning(
-            "⚠️ Please upload and process your PDFs first."
+            "⚠️ Please upload and process a PDF first."
         )
 
         st.stop()
 
 
     # -----------------------------------------------------
-    # Display user question
+    # DISPLAY USER MESSAGE
     # -----------------------------------------------------
 
     with st.chat_message("user"):
 
-        st.markdown(question)
+        st.markdown(
+            question
+        )
 
 
     # -----------------------------------------------------
-    # Save user question
+    # SAVE USER MESSAGE
     # -----------------------------------------------------
 
-    st.session_state.chat_history.append(
-        {
-            "role": "user",
-            "content": question
-        }
-    )
+    st.session_state.chat_history.append({
+
+        "role": "user",
+
+        "content": question
+
+    })
 
 
     # -----------------------------------------------------
-    # Generate answer
+    # GENERATE ANSWER
     # -----------------------------------------------------
 
     with st.chat_message("assistant"):
@@ -601,32 +465,29 @@ if question:
             "🔎 Searching your PDFs..."
         ):
 
-            try:
+            answer, docs = answer_question(
 
-                answer, docs = answer_question(
-                    question,
-                    st.session_state.chat_history
-                )
+                question,
 
-                st.markdown(answer)
+                st.session_state.vector_db,
 
-            except Exception as e:
+                st.session_state.chat_history
 
-                answer = (
-                    "❌ Sorry, I encountered an error while "
-                    "searching the PDF."
-                )
-
-                docs = []
-
-                st.error(
-                    f"{answer}\n\n{str(e)}"
-                )
+            )
 
 
-        # =================================================
-        # SOURCES
-        # =================================================
+        # ---------------------------------------------
+        # DISPLAY ANSWER
+        # ---------------------------------------------
+
+        st.markdown(
+            answer
+        )
+
+
+        # ---------------------------------------------
+        # DISPLAY SOURCES
+        # ---------------------------------------------
 
         if docs:
 
@@ -634,68 +495,32 @@ if question:
                 "📚 View Sources"
             ):
 
-                # Avoid displaying duplicate sources
-                displayed_sources = set()
-
                 for i, doc in enumerate(
                     docs,
-                    start=1
+                    1
                 ):
 
-                    source = doc.metadata.get(
-                        "source",
-                        "Unknown PDF"
-                    )
-
-                    page = doc.metadata.get(
-                        "page",
-                        "Unknown"
-                    )
-
-                    source_key = (
-                        source,
-                        page
-                    )
-
-                    if source_key in displayed_sources:
-
-                        continue
-
-                    displayed_sources.add(
-                        source_key
-                    )
-
                     st.markdown(
-                        f"""
-                        <div class="source-card">
-
-                            <div class="source-title">
-                                📄 {source}
-                            </div>
-
-                            <div class="source-meta">
-                                📖 Page {page}
-                            </div>
-
-                        </div>
-                        """,
-                        unsafe_allow_html=True
+                        f"### Source {i}"
                     )
+
 
                     st.write(
                         doc.page_content[:700]
                     )
 
+
                     st.divider()
 
 
     # -----------------------------------------------------
-    # Save assistant answer
+    # SAVE ASSISTANT RESPONSE
     # -----------------------------------------------------
 
-    st.session_state.chat_history.append(
-        {
-            "role": "assistant",
-            "content": answer
-        }
-    )
+    st.session_state.chat_history.append({
+
+        "role": "assistant",
+
+        "content": answer
+
+    })

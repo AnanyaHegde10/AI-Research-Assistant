@@ -1,5 +1,3 @@
-import os
-
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 
@@ -18,24 +16,20 @@ embedding_model = HuggingFaceEmbeddings(
 # =========================================================
 
 def create_vector_db(chunks):
+    """
+    Create FAISS vector database from text chunks
+    and save it locally.
+    """
 
     if not chunks:
-
-        raise ValueError(
-            "No text chunks were created from the PDFs."
-        )
-
+        raise ValueError("No text chunks were found in the PDFs.")
 
     vector_db = FAISS.from_texts(
         texts=chunks,
         embedding=embedding_model
     )
 
-
-    vector_db.save_local(
-        "faiss_db"
-    )
-
+    vector_db.save_local("faiss_db")
 
     return vector_db
 
@@ -45,25 +39,26 @@ def create_vector_db(chunks):
 # =========================================================
 
 def load_vector_db():
+    """
+    Load previously saved FAISS database.
 
-    index_path = os.path.join(
-        "faiss_db",
-        "index.faiss"
-    )
+    Returns:
+        FAISS database if it exists.
+        None if database does not exist.
+    """
 
-    if not os.path.exists(index_path):
+    try:
+
+        db = FAISS.load_local(
+            "faiss_db",
+            embedding_model,
+            allow_dangerous_deserialization=True
+        )
+
+        return db
+
+    except Exception as e:
+
+        print("FAISS database could not be loaded:", e)
 
         return None
-
-
-    db = FAISS.load_local(
-
-        "faiss_db",
-
-        embedding_model,
-
-        allow_dangerous_deserialization=True
-    )
-
-
-    return db

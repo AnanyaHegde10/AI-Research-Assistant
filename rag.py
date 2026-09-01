@@ -1,10 +1,7 @@
 import os
-import streamlit as st
 
 from dotenv import load_dotenv
 from google import genai
-
-from vector_store import load_vector_db
 
 
 # =========================================================
@@ -15,39 +12,19 @@ load_dotenv()
 
 
 # =========================================================
-# GET GOOGLE API KEY
-# =========================================================
-
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-
-if not GOOGLE_API_KEY:
-
-    try:
-        GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
-
-    except Exception:
-        GOOGLE_API_KEY = None
-
-
-# =========================================================
-# CHECK API KEY
-# =========================================================
-
-if not GOOGLE_API_KEY:
-
-    raise ValueError(
-        "GOOGLE_API_KEY is not configured. "
-        "Add it to your .env file locally or "
-        "Streamlit Cloud Secrets when deploying."
-    )
-
-
-# =========================================================
 # GEMINI CLIENT
 # =========================================================
 
+api_key = os.getenv("GOOGLE_API_KEY")
+
+if not api_key:
+    raise ValueError(
+        "GOOGLE_API_KEY is not configured."
+    )
+
+
 client = genai.Client(
-    api_key=GOOGLE_API_KEY
+    api_key=api_key
 )
 
 
@@ -55,24 +32,30 @@ client = genai.Client(
 # ANSWER QUESTION
 # =========================================================
 
-def answer_question(question, chat_history=None):
+def answer_question(
+    question,
+    db,
+    chat_history=None
+):
+    """
+    Answer a question using the FAISS database
+    and Gemini.
+    """
 
     # -----------------------------------------------------
-    # LOAD FAISS DATABASE
+    # Check database
     # -----------------------------------------------------
-
-    db = load_vector_db()
 
     if db is None:
 
-        raise ValueError(
-            "The PDF knowledge base has not been created yet. "
+        return (
+            "❌ The PDF knowledge base is not loaded. "
             "Please upload and process your PDFs first."
-        )
+        ), []
 
 
     # -----------------------------------------------------
-    # RETRIEVE RELEVANT DOCUMENTS
+    # Retrieve relevant chunks
     # -----------------------------------------------------
 
     docs = db.similarity_search(
@@ -82,7 +65,7 @@ def answer_question(question, chat_history=None):
 
 
     # -----------------------------------------------------
-    # BUILD PDF CONTEXT
+    # Build PDF context
     # -----------------------------------------------------
 
     context = "\n\n".join(
@@ -94,7 +77,7 @@ def answer_question(question, chat_history=None):
 
 
     # -----------------------------------------------------
-    # BUILD CONVERSATION HISTORY
+    # Build conversation history
     # -----------------------------------------------------
 
     conversation = ""
@@ -103,8 +86,8 @@ def answer_question(question, chat_history=None):
 
         for message in chat_history:
 
-            role = message["role"]
-            content = message["content"]
+            role = message.get("role")
+            content = message.get("content", "")
 
             if role == "user":
 
@@ -120,15 +103,15 @@ def answer_question(question, chat_history=None):
 
 
     # -----------------------------------------------------
-    # PROMPT
+    # Prompt
     # -----------------------------------------------------
 
     prompt = f"""
-You are an AI Research Assistant that answers questions
-using the uploaded PDF documents.
+You are an AI Research Assistant that answers
+questions using the uploaded PDF documents.
 
-Your job is to provide accurate answers based ONLY on
-the retrieved PDF context.
+Your answers must be based ONLY on the retrieved
+PDF context.
 
 CONVERSATION HISTORY:
 {conversation}
@@ -138,7 +121,6 @@ RETRIEVED PDF CONTEXT:
 
 CURRENT QUESTION:
 {question}
-
 
 INSTRUCTIONS:
 
@@ -151,42 +133,47 @@ INSTRUCTIONS:
 3. Do NOT use outside knowledge.
 
 4. If the answer is present in the PDF context,
-   explain it clearly.
+   explain it clearly and accurately.
 
-5. If the answer is NOT present in the PDF context,
+5. If the answer is not present in the PDF context,
    say exactly:
 
 "I couldn't find that information in the uploaded PDFs."
 
 6. Keep the answer clear and useful for a student.
 
-7. If the question asks for code or syntax and the
+7. If the question asks for syntax or code and the
    PDF contains an example, include the example.
 
-8. Do not invent information that is not present
-   in the retrieved PDF context.
-
-9. When possible, mention the PDF name and page number
-   from the retrieved document metadata.
+8. Do not invent examples and do not add information
+   from outside the uploaded PDFs.
 
 ANSWER:
 """
 
 
     # -----------------------------------------------------
-    # GEMINI
+    # Gemini
     # -----------------------------------------------------
 
-    response = client.models.generate_content(
+    try:
 
-        model="models/gemini-flash-lite-latest",
+        response = client.models.generate_content(
 
-        contents=prompt
-    )
+            model="models/gemini-flash-lite-latest",
 
+            contents=prompt
+        )
 
-    # -----------------------------------------------------
-    # RETURN ANSWER AND SOURCES
-    # -----------------------------------------------------
+        answer = response.text
 
-    return response.text, docs
+        return answer, docs
+
+    except Exception as e:
+
+        print("Gemini error:", e)
+
+        return (
+            "❌ Sorry, I encountered an error while "
+            "generating the answer."
+        ), docs
