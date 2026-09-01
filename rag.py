@@ -1,5 +1,5 @@
 import os
-
+import streamlit as st
 from dotenv import load_dotenv
 from google import genai
 
@@ -14,19 +14,50 @@ load_dotenv()
 
 
 # =========================================================
+# GET GOOGLE API KEY
+# =========================================================
+
+# Local computer → reads from .env
+# Streamlit Cloud → reads from Secrets
+
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+
+if not GOOGLE_API_KEY:
+
+    try:
+        GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
+
+    except Exception:
+        GOOGLE_API_KEY = None
+
+
+# =========================================================
+# CHECK API KEY
+# =========================================================
+
+if not GOOGLE_API_KEY:
+
+    raise ValueError(
+        "GOOGLE_API_KEY is not configured. "
+        "Add it to your .env file locally or "
+        "Streamlit Cloud Secrets when deploying."
+    )
+
+
+# =========================================================
 # GEMINI CLIENT
 # =========================================================
 
 client = genai.Client(
-    api_key=os.getenv("GOOGLE_API_KEY")
+    api_key=GOOGLE_API_KEY
 )
 
 
 # =========================================================
-# GEMINI MODEL
+# LOAD VECTOR DATABASE
 # =========================================================
 
-MODEL_NAME = "models/gemini-flash-lite-latest"
+db = load_vector_db()
 
 
 # =========================================================
@@ -36,35 +67,39 @@ MODEL_NAME = "models/gemini-flash-lite-latest"
 def answer_question(question, chat_history=None):
 
     # -----------------------------------------------------
-    # Load FAISS database
+    # RETRIEVE RELEVANT DOCUMENTS
     # -----------------------------------------------------
 
-    db = load_vector_db()
-
-
-    if db is None:
-
-        return (
-            "I couldn't find a processed PDF database. "
-            "Please upload and process your PDFs first."
-        ), []
+    docs = db.similarity_search(
+        question,
+        k=5
+    )
 
 
     # -----------------------------------------------------
-    # Prepare conversation history
+    # BUILD PDF CONTEXT
+    # -----------------------------------------------------
+
+    context = "\n\n".join(
+        [
+            doc.page_content
+            for doc in docs
+        ]
+    )
+
+
+    # -----------------------------------------------------
+    # BUILD CONVERSATION HISTORY
     # -----------------------------------------------------
 
     conversation = ""
 
     if chat_history:
 
-        # Use recent conversation only
-        recent_history = chat_history[-10:]
+        for message in chat_history:
 
-        for message in recent_history:
-
-            role = message.get("role", "")
-            content = message.get("content", "")
+            role = message["role"]
+            content = message["content"]
 
             if role == "user":
 
@@ -79,131 +114,16 @@ def answer_question(question, chat_history=None):
                 )
 
 
-    # =====================================================
-    # STEP 1: CREATE SEARCH QUERY
-    # =====================================================
-
-    # The purpose of this step is to understand questions
-    # such as:
-    #
-    # "give me its example"
-    #
-    # where "its" refers to something from the previous
-    # conversation.
-
-    query_prompt = f"""
-You are helping an AI Research Assistant search
-uploaded PDF documents.
-
-CONVERSATION HISTORY:
-{conversation}
-
-CURRENT QUESTION:
-{question}
-
-Create a short search query that represents what the
-user is asking about.
-
-Resolve references such as:
-- it
-- its
-- this
-- that
-- they
-- them
-- above
-- previous
-
-Do NOT answer the question.
-
-Return ONLY the search query.
-"""
-
-
     # -----------------------------------------------------
-    # Generate search query
+    # PROMPT
     # -----------------------------------------------------
-
-    try:
-
-        query_response = client.models.generate_content(
-
-            model=MODEL_NAME,
-
-            contents=query_prompt
-        )
-
-        search_query = query_response.text.strip()
-
-    except Exception:
-
-        # If query generation fails, simply use the
-        # original question.
-
-        search_query = question
-
-
-    # =====================================================
-    # STEP 2: RETRIEVE DOCUMENTS
-    # =====================================================
-
-    docs = db.similarity_search(
-
-        search_query,
-
-        k=5
-    )
-
-
-    # =====================================================
-    # STEP 3: BUILD PDF CONTEXT
-    # =====================================================
-
-    context_parts = []
-
-
-    for i, doc in enumerate(docs, 1):
-
-        metadata = doc.metadata or {}
-
-        source = metadata.get(
-            "source",
-            "Unknown PDF"
-        )
-
-        page = metadata.get(
-            "page",
-            "Unknown"
-        )
-
-
-        context_parts.append(
-
-            f"""
-SOURCE {i}
-PDF: {source}
-PAGE: {page}
-
-CONTENT:
-{doc.page_content}
-"""
-        )
-
-
-    context = "\n\n".join(
-        context_parts
-    )
-
-
-    # =====================================================
-    # STEP 4: BUILD FINAL PROMPT
-    # =====================================================
 
     prompt = f"""
 You are an AI Research Assistant that answers questions
-using ONLY the uploaded PDF documents.
+using the uploaded PDF documents.
 
-Your answers are intended for students.
+Your job is to provide accurate answers based ONLY on
+the retrieved PDF context.
 
 CONVERSATION HISTORY:
 {conversation}
@@ -215,69 +135,53 @@ CURRENT QUESTION:
 {question}
 
 
-IMPORTANT RULES:
+INSTRUCTIONS:
 
-1. Answer ONLY using the retrieved PDF context.
+1. Answer the current question using the PDF context.
 
-2. Use the conversation history only to understand
-   references such as:
-   "it", "its", "this", "that", "they", "them",
-   "above", or "previous".
+2. You may use the conversation history only to
+   understand references such as:
+   "it", "this", "that", "they", etc.
 
 3. Do NOT use outside knowledge.
 
-4. If the requested information is present in the
-   retrieved PDF context, explain it clearly.
+4. If the answer is present in the PDF context,
+   explain it clearly.
 
-5. If the information is NOT present in the retrieved
-   PDF context, respond EXACTLY with:
+5. If the answer is NOT present in the PDF context,
+   say exactly:
 
 "I couldn't find that information in the uploaded PDFs."
 
-6. Do not invent examples, syntax, definitions,
-   page numbers, or facts.
+6. Keep the answer clear and useful for a student.
 
-7. If the user asks for syntax and the PDF contains
-   syntax, provide it.
+7. If the question asks for code or syntax and the
+   PDF contains an example, include the example.
 
-8. If the user asks for an example and the PDF contains
-   an example, provide it.
+8. Do not invent information that is not present
+   in the retrieved PDF context.
 
-9. If the PDF contains a code example, preserve the
-   code accurately.
-
-10. Keep explanations simple and useful for a student.
-
-11. Use Markdown headings, bullet points and code blocks
-    when they improve readability.
-
-12. Do not mention the retrieval process.
-
-13. Do not say "according to my knowledge".
-
-14. Do not answer from general programming knowledge.
+9. When possible, mention the PDF name and page number
+   from the retrieved document metadata.
 
 ANSWER:
 """
 
 
     # =====================================================
-    # STEP 5: GEMINI ANSWER
+    # GEMINI RESPONSE
     # =====================================================
 
     response = client.models.generate_content(
 
-        model=MODEL_NAME,
+        model="models/gemini-flash-lite-latest",
 
         contents=prompt
     )
 
 
-    answer = response.text
-
-
     # =====================================================
-    # RETURN ANSWER + SOURCE DOCUMENTS
+    # RETURN ANSWER + DOCUMENTS
     # =====================================================
 
-    return answer, docs
+    return response.text, docs
