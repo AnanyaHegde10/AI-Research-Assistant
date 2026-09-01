@@ -1,12 +1,29 @@
+# Virtual environments
 venv/
 .venv/
 
+# Environment variables / API keys
 .env
+.env.*
 
+# Python cache
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 
+# Streamlit
+.streamlit/
+
+# Uploaded PDFs
 uploads/
+
+# FAISS database
 faiss_db/
 
-.streamlit/secrets.toml
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

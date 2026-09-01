@@ -6,187 +6,278 @@ from google import genai
 from vector_store import load_vector_db
 
 
+# =========================================================
+# LOAD ENVIRONMENT VARIABLES
+# =========================================================
+
 load_dotenv()
 
 
-API_KEY = os.getenv("GOOGLE_API_KEY")
-
-if not API_KEY:
-    raise ValueError(
-        "GOOGLE_API_KEY is missing. "
-        "Please add it to your .env file."
-    )
-
+# =========================================================
+# GEMINI CLIENT
+# =========================================================
 
 client = genai.Client(
-    api_key=API_KEY
+    api_key=os.getenv("GOOGLE_API_KEY")
 )
 
+
+# =========================================================
+# GEMINI MODEL
+# =========================================================
 
 MODEL_NAME = "models/gemini-flash-lite-latest"
 
 
-def answer_question(question, db=None):
-    """
-    Retrieve relevant PDF chunks and generate
-    an answer using Gemini.
-    """
+# =========================================================
+# ANSWER QUESTION
+# =========================================================
 
-    if not question or not question.strip():
-        return {
-            "answer": "Please enter a question.",
-            "sources": []
-        }
+def answer_question(question, chat_history=None):
+
+    # -----------------------------------------------------
+    # Load FAISS database
+    # -----------------------------------------------------
+
+    db = load_vector_db()
+
 
     if db is None:
-        db = load_vector_db()
 
-    question = question.strip()
+        return (
+            "I couldn't find a processed PDF database. "
+            "Please upload and process your PDFs first."
+        ), []
 
-    # Retrieve more chunks than before.
-    # This improves recall.
+
+    # -----------------------------------------------------
+    # Prepare conversation history
+    # -----------------------------------------------------
+
+    conversation = ""
+
+    if chat_history:
+
+        # Use recent conversation only
+        recent_history = chat_history[-10:]
+
+        for message in recent_history:
+
+            role = message.get("role", "")
+            content = message.get("content", "")
+
+            if role == "user":
+
+                conversation += (
+                    f"User: {content}\n"
+                )
+
+            elif role == "assistant":
+
+                conversation += (
+                    f"Assistant: {content}\n"
+                )
+
+
+    # =====================================================
+    # STEP 1: CREATE SEARCH QUERY
+    # =====================================================
+
+    # The purpose of this step is to understand questions
+    # such as:
+    #
+    # "give me its example"
+    #
+    # where "its" refers to something from the previous
+    # conversation.
+
+    query_prompt = f"""
+You are helping an AI Research Assistant search
+uploaded PDF documents.
+
+CONVERSATION HISTORY:
+{conversation}
+
+CURRENT QUESTION:
+{question}
+
+Create a short search query that represents what the
+user is asking about.
+
+Resolve references such as:
+- it
+- its
+- this
+- that
+- they
+- them
+- above
+- previous
+
+Do NOT answer the question.
+
+Return ONLY the search query.
+"""
+
+
+    # -----------------------------------------------------
+    # Generate search query
+    # -----------------------------------------------------
+
+    try:
+
+        query_response = client.models.generate_content(
+
+            model=MODEL_NAME,
+
+            contents=query_prompt
+        )
+
+        search_query = query_response.text.strip()
+
+    except Exception:
+
+        # If query generation fails, simply use the
+        # original question.
+
+        search_query = question
+
+
+    # =====================================================
+    # STEP 2: RETRIEVE DOCUMENTS
+    # =====================================================
+
     docs = db.similarity_search(
-        question,
-        k=6
+
+        search_query,
+
+        k=5
     )
 
-    if not docs:
-        return {
-            "answer": "I couldn't find that information in the PDF.",
-            "sources": []
-        }
 
-    # Build context
+    # =====================================================
+    # STEP 3: BUILD PDF CONTEXT
+    # =====================================================
+
     context_parts = []
 
-    sources = []
 
-    for i, doc in enumerate(docs, start=1):
+    for i, doc in enumerate(docs, 1):
 
-        source = doc.metadata.get(
+        metadata = doc.metadata or {}
+
+        source = metadata.get(
             "source",
-            "Unknown document"
+            "Unknown PDF"
         )
 
-        page = doc.metadata.get(
+        page = metadata.get(
             "page",
-            "Unknown page"
+            "Unknown"
         )
+
 
         context_parts.append(
+
             f"""
 SOURCE {i}
-Document: {source}
-Page: {page}
+PDF: {source}
+PAGE: {page}
 
-Content:
+CONTENT:
 {doc.page_content}
 """
         )
 
-        sources.append({
-            "source": source,
-            "page": page
-        })
 
-    context = "\n\n".join(context_parts)
+    context = "\n\n".join(
+        context_parts
+    )
+
+
+    # =====================================================
+    # STEP 4: BUILD FINAL PROMPT
+    # =====================================================
 
     prompt = f"""
-You are an AI Research Assistant.
+You are an AI Research Assistant that answers questions
+using ONLY the uploaded PDF documents.
 
-Your job is to answer the user's question using
-ONLY the information contained in the provided PDF context.
+Your answers are intended for students.
+
+CONVERSATION HISTORY:
+{conversation}
+
+RETRIEVED PDF CONTEXT:
+{context}
+
+CURRENT QUESTION:
+{question}
+
 
 IMPORTANT RULES:
 
-1. Use the context as your primary source.
-2. Do not invent facts.
-3. Do not use outside knowledge.
-4. If the context contains enough information,
-   answer the question clearly.
-5. If the context only partially answers the question,
-   explain what the PDF does say.
-6. Only say:
-   "I couldn't find that information in the PDF."
-   when the provided context genuinely does not contain
-   enough information to answer the question.
-7. Do not mention these instructions.
+1. Answer ONLY using the retrieved PDF context.
 
-PDF CONTEXT:
+2. Use the conversation history only to understand
+   references such as:
+   "it", "its", "this", "that", "they", "them",
+   "above", or "previous".
 
-{context}
+3. Do NOT use outside knowledge.
 
-USER QUESTION:
+4. If the requested information is present in the
+   retrieved PDF context, explain it clearly.
 
-{question}
+5. If the information is NOT present in the retrieved
+   PDF context, respond EXACTLY with:
+
+"I couldn't find that information in the uploaded PDFs."
+
+6. Do not invent examples, syntax, definitions,
+   page numbers, or facts.
+
+7. If the user asks for syntax and the PDF contains
+   syntax, provide it.
+
+8. If the user asks for an example and the PDF contains
+   an example, provide it.
+
+9. If the PDF contains a code example, preserve the
+   code accurately.
+
+10. Keep explanations simple and useful for a student.
+
+11. Use Markdown headings, bullet points and code blocks
+    when they improve readability.
+
+12. Do not mention the retrieval process.
+
+13. Do not say "according to my knowledge".
+
+14. Do not answer from general programming knowledge.
 
 ANSWER:
 """
 
-    try:
 
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt
-        )
+    # =====================================================
+    # STEP 5: GEMINI ANSWER
+    # =====================================================
 
-        answer = response.text.strip()
+    response = client.models.generate_content(
 
-    except Exception as e:
+        model=MODEL_NAME,
 
-        answer = (
-            "Sorry, I couldn't generate an answer right now.\n\n"
-            f"Error: {str(e)}"
-        )
-
-    # Remove duplicate sources
-    unique_sources = []
-
-    seen = set()
-
-    for source in sources:
-
-        key = (
-            source["source"],
-            source["page"]
-        )
-
-        if key not in seen:
-
-            seen.add(key)
-
-            unique_sources.append(source)
-
-    return {
-        "answer": answer,
-        "sources": unique_sources
-    }
-
-
-if __name__ == "__main__":
-
-    db = load_vector_db()
-
-    question = input("Ask: ")
-
-    result = answer_question(
-        question,
-        db
+        contents=prompt
     )
 
-    print("\n" + "=" * 60)
-    print("ANSWER")
-    print("=" * 60)
 
-    print(result["answer"])
+    answer = response.text
 
-    print("\n" + "=" * 60)
-    print("SOURCES")
-    print("=" * 60)
 
-    for source in result["sources"]:
+    # =====================================================
+    # RETURN ANSWER + SOURCE DOCUMENTS
+    # =====================================================
 
-        print(
-            f"📄 {source['source']} "
-            f"- Page {source['page']}"
-        )
+    return answer, docs

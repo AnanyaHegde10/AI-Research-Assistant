@@ -1,51 +1,101 @@
-from pathlib import Path
+import os
+import shutil
 
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 
 
-FAISS_DIR = "faiss_db"
+# =========================================================
+# EMBEDDING MODEL
+# =========================================================
 
-# Load embedding model once
 embedding_model = HuggingFaceEmbeddings(
     model_name="sentence-transformers/all-MiniLM-L6-v2"
 )
 
 
+# =========================================================
+# FAISS DATABASE PATH
+# =========================================================
+
+FAISS_PATH = "faiss_db"
+
+
+# =========================================================
+# CREATE VECTOR DATABASE
+# =========================================================
+
 def create_vector_db(documents):
     """
     Create a FAISS vector database from LangChain Documents.
+
+    Each Document contains:
+        - page_content
+        - metadata
     """
 
     if not documents:
-        raise ValueError("No documents were provided.")
+        raise ValueError(
+            "No documents were provided to create the vector database."
+        )
+
+    # -----------------------------------------------------
+    # Remove old FAISS database
+    # -----------------------------------------------------
+
+    if os.path.exists(FAISS_PATH):
+
+        shutil.rmtree(FAISS_PATH)
+
+
+    # -----------------------------------------------------
+    # Create new FAISS database
+    # -----------------------------------------------------
 
     vector_db = FAISS.from_documents(
-        documents,
-        embedding_model
+        documents=documents,
+        embedding=embedding_model
     )
 
-    vector_db.save_local(FAISS_DIR)
+
+    # -----------------------------------------------------
+    # Save database
+    # -----------------------------------------------------
+
+    vector_db.save_local(
+        FAISS_PATH
+    )
+
 
     return vector_db
 
 
+# =========================================================
+# LOAD VECTOR DATABASE
+# =========================================================
+
 def load_vector_db():
     """
-    Load the saved FAISS vector database.
+    Load previously saved FAISS database.
+
+    Returns:
+        FAISS database if it exists.
+        None if database does not exist.
     """
 
-    index_path = Path(FAISS_DIR) / "index.faiss"
+    if not os.path.exists(FAISS_PATH):
 
-    if not index_path.exists():
-        raise FileNotFoundError(
-            "FAISS database not found. Please upload and process a PDF first."
-        )
+        return None
+
 
     db = FAISS.load_local(
-        FAISS_DIR,
+
+        FAISS_PATH,
+
         embedding_model,
+
         allow_dangerous_deserialization=True
     )
+
 
     return db
