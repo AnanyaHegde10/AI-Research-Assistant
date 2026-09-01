@@ -1,5 +1,6 @@
 import os
 import streamlit as st
+
 from dotenv import load_dotenv
 from google import genai
 
@@ -16,9 +17,6 @@ load_dotenv()
 # =========================================================
 # GET GOOGLE API KEY
 # =========================================================
-
-# Local computer → reads from .env
-# Streamlit Cloud → reads from Secrets
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
@@ -54,17 +52,24 @@ client = genai.Client(
 
 
 # =========================================================
-# LOAD VECTOR DATABASE
-# =========================================================
-
-db = load_vector_db()
-
-
-# =========================================================
 # ANSWER QUESTION
 # =========================================================
 
 def answer_question(question, chat_history=None):
+
+    # -----------------------------------------------------
+    # LOAD FAISS DATABASE
+    # -----------------------------------------------------
+
+    db = load_vector_db()
+
+    if db is None:
+
+        raise ValueError(
+            "The PDF knowledge base has not been created yet. "
+            "Please upload and process your PDFs first."
+        )
+
 
     # -----------------------------------------------------
     # RETRIEVE RELEVANT DOCUMENTS
@@ -168,9 +173,9 @@ ANSWER:
 """
 
 
-    # =====================================================
-    # GEMINI RESPONSE
-    # =====================================================
+    # -----------------------------------------------------
+    # GEMINI
+    # -----------------------------------------------------
 
     response = client.models.generate_content(
 
@@ -180,8 +185,8 @@ ANSWER:
     )
 
 
-    # =====================================================
-    # RETURN ANSWER + DOCUMENTS
-    # =====================================================
+    # -----------------------------------------------------
+    # RETURN ANSWER AND SOURCES
+    # -----------------------------------------------------
 
     return response.text, docs

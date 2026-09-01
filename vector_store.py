@@ -1,5 +1,4 @@
 import os
-import shutil
 
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -15,55 +14,26 @@ embedding_model = HuggingFaceEmbeddings(
 
 
 # =========================================================
-# FAISS DATABASE PATH
-# =========================================================
-
-FAISS_PATH = "faiss_db"
-
-
-# =========================================================
 # CREATE VECTOR DATABASE
 # =========================================================
 
-def create_vector_db(documents):
-    """
-    Create a FAISS vector database from LangChain Documents.
+def create_vector_db(chunks):
 
-    Each Document contains:
-        - page_content
-        - metadata
-    """
+    if not chunks:
 
-    if not documents:
         raise ValueError(
-            "No documents were provided to create the vector database."
+            "No text chunks were created from the PDFs."
         )
 
-    # -----------------------------------------------------
-    # Remove old FAISS database
-    # -----------------------------------------------------
 
-    if os.path.exists(FAISS_PATH):
-
-        shutil.rmtree(FAISS_PATH)
-
-
-    # -----------------------------------------------------
-    # Create new FAISS database
-    # -----------------------------------------------------
-
-    vector_db = FAISS.from_documents(
-        documents=documents,
+    vector_db = FAISS.from_texts(
+        texts=chunks,
         embedding=embedding_model
     )
 
 
-    # -----------------------------------------------------
-    # Save database
-    # -----------------------------------------------------
-
     vector_db.save_local(
-        FAISS_PATH
+        "faiss_db"
     )
 
 
@@ -75,22 +45,20 @@ def create_vector_db(documents):
 # =========================================================
 
 def load_vector_db():
-    """
-    Load previously saved FAISS database.
 
-    Returns:
-        FAISS database if it exists.
-        None if database does not exist.
-    """
+    index_path = os.path.join(
+        "faiss_db",
+        "index.faiss"
+    )
 
-    if not os.path.exists(FAISS_PATH):
+    if not os.path.exists(index_path):
 
         return None
 
 
     db = FAISS.load_local(
 
-        FAISS_PATH,
+        "faiss_db",
 
         embedding_model,
 
